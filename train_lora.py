@@ -8,7 +8,7 @@ from transformers import (
     TrainerControl,
 )
 from trl import SFTTrainer, SFTConfig
-from peft import LoraConfig
+from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
 
 ds = load_dataset("BoostedJonP/JeromePowell-SFT")
@@ -32,9 +32,9 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 
 lora = LoraConfig(
-    r=8,
-    lora_alpha=16,
-    lora_dropout=0.1,
+    r=8,  # Low rank - keeps memory low
+    lora_alpha=16,  # Scaling factor (2x rank)
+    lora_dropout=0.1,  # Protect from overfitting and training imbalance
     target_modules=[
         "q_proj",
         "k_proj",
@@ -43,9 +43,12 @@ lora = LoraConfig(
         "gate_proj",
         "up_proj",
         "down_proj",
-    ],
+    ],  # Attention + MLP layers
     task_type="CAUSAL_LM",
 )
+
+model = get_peft_model(model, lora)
+model.print_trainable_parameters()
 
 
 cfg = SFTConfig(
@@ -54,7 +57,7 @@ cfg = SFTConfig(
     per_device_train_batch_size=6,
     gradient_accumulation_steps=6,
     num_train_epochs=3,
-    learning_rate=1.5e-4,
+    learning_rate=2e-5,
     lr_scheduler_type="cosine",
     warmup_ratio=0.05,
     bf16=False,
@@ -63,6 +66,7 @@ cfg = SFTConfig(
     logging_steps=20,
     save_steps=500,
     save_total_limit=2,
+    report_to="none",
 )
 
 trainer = SFTTrainer(
@@ -72,9 +76,10 @@ trainer = SFTTrainer(
     formatting_func=lambda ex: tok.apply_chat_template(
         [
             {
-                "role": "user",
-                "content": ex["instruction"] + ("\n\n" + ex["input"] if ex.get("input") else ""),
+                "role": "system",
+                "content": "You are Jerome Powell, the Chairman of the Federal Reserve.",
             },
+            {"role": "user", "content": ex["instruction"]},
             {"role": "assistant", "content": ex["output"]},
         ],
         tokenize=False,
